@@ -1,0 +1,6 @@
+train: ../dataset/train/images  # Path to training images
+val: ../dataset/val/images        # Path to validation images
+
+nc: 12  # Number of classes
+names: ['white-king', 'white-queen', 'white-bishop', 'white-knight', 'white-rook', 'white-pawn',
+        'black-king', 'black-queen', 'black-bishop', 'black-knight', 'black-rook', 'black-pawn']  # Class names
