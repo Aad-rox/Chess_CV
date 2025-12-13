@@ -8,7 +8,7 @@ import time
 
 
 # Load the image
-image_path = "imgs/img_1.JPG"  # Update this to your image path
+image_path = "imgs/topdown_board.png"  # Update this to your image path
 image = cv2.imread(image_path)
 if image is None:
     print("Error loading image.")

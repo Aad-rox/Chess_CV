@@ -1,5 +1,9 @@
 import cv2
 import numpy as np
+from models.square_classifier import load_model, predict_square
+
+# Load the model once
+model = load_model("models/weights.pth")
 
 # Initialize global variables for storing points
 points = []
@@ -39,6 +43,7 @@ def perspective_transform(image, src_pts):
     warped = cv2.warpPerspective(image, M, (500, 500))
     return warped
 
+
 def highlight_chessboard_squares(warped_image, board_size=8):
     # Get the height and width of the warped image
     height, width = warped_image.shape[:2]
@@ -60,6 +65,7 @@ def highlight_chessboard_squares(warped_image, board_size=8):
             cv2.rectangle(warped_image, (start_x, start_y), (end_x, end_y), (0, 255, 0), 2)
 
     return warped_image
+
 
 def split_chessboard_into_squares(warped_image, board_size=8):
     # Get the height and width of the warped image
@@ -87,14 +93,17 @@ def split_chessboard_into_squares(warped_image, board_size=8):
             squares.append(square)
 
             # Optionally display the square (for debugging)
-            cv2.imshow(f"Square {row}-{col}", square)
-            cv2.waitKey(100)  # Display each square for a short time
+            # You might want to remove this waitKey if it slows down processing too much
+            cv2.imshow(f"Square Debug", square)
+            cv2.waitKey(5)
 
     return squares
+
+
 # Main function
 def main():
     # Load chessboard image
-    image = cv2.imread("imgs/chess_knight.png")
+    image = cv2.imread("imgs/topdown_board.png")
     if image is None:
         print("Error loading image.")
         return
@@ -109,7 +118,6 @@ def main():
     # Create a window and set the mouse callback function
     cv2.namedWindow("Chessboard")
     cv2.setMouseCallback("Chessboard", mouse_callback)
-
 
     while True:
         # Display the image
@@ -129,15 +137,29 @@ def main():
         # Press 'p' to perform perspective transform when four points are selected
         key = cv2.waitKey(1) & 0xFF
         if key == ord('p') and len(points) == 4:
-            # Perform perspective transformation
+            # 1. Perform perspective transformation
             src_pts = np.array(points, dtype="float32")
             warped_image = perspective_transform(image, src_pts)
+
+            # Show the clean warped result
             cv2.imshow("Warped Chessboard", warped_image)
-            squares=highlight_chessboard_squares(warped_image)
-            cv2.imshow("Squares Chessboard", squares)
+
+            # 2. Create a COPY for drawing the grid (Visualization only)
+            debug_warped = warped_image.copy()
+            highlighted_image = highlight_chessboard_squares(debug_warped)
+            cv2.imshow("Squares Chessboard", highlighted_image)
+
+            # 3. Use the CLEAN warped_image for splitting and prediction
+            # (Pass the original warped_image here, NOT the one with green lines)
             all_squares = split_chessboard_into_squares(warped_image)
 
-
+            print("Starting Predictions...")
+            for r in range(8):
+                for c in range(8):
+                    idx = r * 8 + c
+                    label = predict_square(model, all_squares[idx])
+                    print(f"Square {r},{c}: {label}")
+            print("Predictions Complete.")
 
         # Press 'q' to exit
         if key == ord('q'):
@@ -149,4 +171,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
