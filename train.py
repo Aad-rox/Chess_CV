@@ -5,51 +5,66 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 import os
 
-# Import your existing model definition and classes
+# Import your model definition and classes
 # Ensure square_classifier.py is inside the 'models' folder
-from models.square_classifier import load_model, CLASSES
+from models.square_classifier import CLASSES
 from torchvision.models import resnet18
 
 
 def train():
     # --- CONFIGURATION ---
-    DATA_DIR = "data"  # Folder containing 'empty', 'wp', 'bn', etc.
+    DATA_DIR = "dataset_v2"
     SAVE_PATH = "models/weights.pth"
-    BATCH_SIZE = 32
-    EPOCHS = 5  # 5 epochs is usually enough for this small task
+    BATCH_SIZE = 16
+    EPOCHS = 24  # Increased to give time to learn variations
     LEARNING_RATE = 0.001
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Mac Silicon Support
+    if torch.backends.mps.is_available():
+        DEVICE = "mps"
+
     print(f"Training on {DEVICE}...")
 
-    # --- DATA PREPARATION ---
-    # These transforms must match square_classifier.py exactly
-    data_transform = transforms.Compose([
+    # --- THE MAGIC SAUCE: AUGMENTATION ---
+    train_transform = transforms.Compose([
+        # Note: If you re-ran the collector at 1000px, change this to (128, 128)
+        # If you are still using the old data, keep it (64, 64)
         transforms.Resize((64, 64)),
+
+        # 1. Rotation: Top-down pieces are circles.
+        transforms.RandomRotation(degrees=25),
+
+        # 2. Lighting: Simulates shadows or brighter webcam days.
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
+
+        # 3. Flips: A pawn is a pawn, whether on the left or right.
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomVerticalFlip(p=0.5),
+
         transforms.ToTensor(),
     ])
 
     # Load data
     if not os.path.exists(DATA_DIR):
-        print(f"ERROR: Directory '{DATA_DIR}' not found. Please create it.")
+        print(f"ERROR: Directory '{DATA_DIR}' not found.")
         return
 
-    train_dataset = datasets.ImageFolder(root=DATA_DIR, transform=data_transform)
+    train_dataset = datasets.ImageFolder(root=DATA_DIR, transform=train_transform)
 
-    # Check classes
-    print(f"Classes found: {train_dataset.classes}")
-    if train_dataset.classes != sorted(CLASSES):
-        print("\nWARNING: Your data folders do not match the model classes exactly!")
-        print(f"Model expects: {sorted(CLASSES)}")
-        print(f"Data found:  {train_dataset.classes}")
-        print("Please check folder names (e.g., 'empty' vs 'Empty').\n")
-        # We continue, but this might cause prediction errors later if names don't align.
+    # --- SAFETY CHECK ---
+    detected_classes = train_dataset.classes
+    if detected_classes != sorted(CLASSES):
+        print("\n!!! WARNING !!!")
+        print(f"Folder classes: {detected_classes}")
+        print(f"Model classes:  {sorted(CLASSES)}")
+        print("Classes do not match exactly. Double check your folder names.")
 
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
     # --- MODEL SETUP ---
-    # Initialize a fresh ResNet18
     model = resnet18(weights='DEFAULT')
-    model.fc = nn.Linear(model.fc.in_features, len(CLASSES))
+    model.fc = nn.Linear(model.fc.in_features, len(detected_classes))
     model.to(DEVICE)
 
     # --- TRAINING LOOP ---
@@ -57,6 +72,11 @@ def train():
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     model.train()
+    print("Starting training...")
+
+    # TRACKING BEST ACCURACY
+    best_acc = 0.0
+
     for epoch in range(EPOCHS):
         running_loss = 0.0
         correct = 0
@@ -76,13 +96,21 @@ def train():
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-        print(
-            f"Epoch {epoch + 1}/{EPOCHS} | Loss: {running_loss / len(train_loader):.4f} | Acc: {100 * correct / total:.2f}%")
+        # Calculate epoch stats
+        epoch_loss = running_loss / len(train_loader)
+        acc = 100 * correct / total
 
-    # --- SAVE WEIGHTS ---
-    os.makedirs("models", exist_ok=True)
-    torch.save(model.state_dict(), SAVE_PATH)
-    print(f"\nDONE! Weights saved to: {SAVE_PATH}")
+        print(f"Epoch {epoch + 1}/{EPOCHS} | Loss: {epoch_loss:.4f} | Acc: {acc:.2f}%")
+
+        # --- SAVE ONLY IF BETTER ---
+        if acc > best_acc:
+            best_acc = acc
+            os.makedirs("models", exist_ok=True)
+            torch.save(model.state_dict(), SAVE_PATH)
+            print(f"  --> New Best Model! Saved weights ({acc:.2f}%)")
+
+    print(f"\nDONE! Best accuracy achieved was: {best_acc:.2f}%")
+    print(f"Weights saved to: {SAVE_PATH}")
 
 
 if __name__ == "__main__":
