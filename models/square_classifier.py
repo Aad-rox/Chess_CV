@@ -26,6 +26,15 @@ transform = T.Compose([
 ])
 
 
+def get_device():
+    """Best available device: Apple GPU (mps), NVIDIA (cuda), or cpu."""
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
 def predict_square(model, square_img):
     # 1. CRITICAL FIX: Convert OpenCV BGR to RGB
     # The model was trained on RGB images, but OpenCV gives BGR.
@@ -33,7 +42,25 @@ def predict_square(model, square_img):
 
     # 2. Transform the corrected image
     x = transform(rgb_square).unsqueeze(0)
+    x = x.to(next(model.parameters()).device)
 
     with torch.no_grad():
         logits = model(x)
     return CLASSES[logits.argmax(dim=1).item()]
+
+
+def predict_board(model, squares):
+    """Classifies a list of square crops in a single batched forward pass.
+
+    Much faster than calling predict_square per square: the whole board
+    goes through the network at once instead of 64 separate passes.
+    Returns a list of labels in the same order as the input.
+    """
+    batch = torch.stack([
+        transform(cv2.cvtColor(sq, cv2.COLOR_BGR2RGB)) for sq in squares
+    ])
+    batch = batch.to(next(model.parameters()).device)
+
+    with torch.no_grad():
+        logits = model(batch)
+    return [CLASSES[i] for i in logits.argmax(dim=1).tolist()]
