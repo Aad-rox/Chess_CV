@@ -61,8 +61,8 @@ def generate_digital_board(predictions, board_size_px=BOARD_SIZE_PX):
         _piece_images = load_piece_images(sq_size)
         _piece_images["size"] = sq_size
 
-    color_light = (240, 217, 181)  # Beige
-    color_dark = (181, 136, 99)  # Brown
+    color_light = (181, 217, 240)  # Beige (BGR)
+    color_dark = (99, 136, 181)  # Brown (BGR)
 
     for r in range(8):
         for c in range(8):
