@@ -1,0 +1,221 @@
+# Chess CV — Project History & Usage Guide
+
+A webcam-based chess board reader: it watches a physical chess board,
+classifies every square with a ResNet18 model, reconstructs the position as
+FEN, and tracks the game move by move.
+
+This file records every feature added during the June 2026 working sessions,
+in order, with usage instructions for each. (See [README.md](README.md) for
+the quick-start version.)
+
+> **Environment note (read this first):** the Python with all dependencies
+> (torch, opencv, python-chess) is
+> `/Library/Frameworks/Python.framework/Versions/3.11/bin/python3`.
+> The shell alias `python3` points at the system Python, which is missing
+> these packages. If you see `No module named cv2`, that's why.
+
+---
+
+## 1. Training improvements (`76d9c01`)
+
+What changed in `train.py`:
+
+- **Stratified 80/20 train/validation split** (per class, so rare classes like
+  kings/queens appear in both sets). Before this there was *no* validation
+  set, so reported accuracy was on memorized training images.
+- **Stronger augmentation:** `RandomAffine` (full 180° rotation, ±10%
+  translation, 0.85–1.1× scale) and `RandomPerspective`. These simulate
+  imperfect grid crops and off-overhead camera angles.
+- **WeightedRandomSampler:** counters class imbalance (`empty` is half the
+  dataset; kings/queens are only ~40 images each).
+- Checkpoints are saved on best **validation** accuracy, not training accuracy.
+
+**Result: 99.22% validation accuracy** (epoch 18). Weakest class: white king
+(7/8 on its small validation set). The 64-square compounding math: at 99.22%
+per square, a full-board readout is entirely correct ~61% of the time —
+which is why temporal voting (section 5) exists.
+
+```bash
+python3 train.py
+```
+
+Trains on `dataset_v2/`, prints train + val accuracy per epoch, saves best
+weights to `models/weights.pth`, prints per-class validation accuracy at the
+end.
+
+*Known follow-up:* late-epoch validation accuracy was unstable (80–99%
+swings); adding an LR scheduler (e.g. `StepLR(step_size=10, gamma=0.3)`)
+would help.
+
+## 2. FEN output + move tracking (`4325f73`)
+
+New file `board_state.py`:
+
+- `predictions_to_placement(preds)`: converts the 64 square labels (row-major
+  from the top-left, white assumed at the bottom) into a FEN placement string
+  like `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR`.
+- `GameTracker`: wraps a python-chess board. Each board readout is matched
+  against the **legal moves** of the current position (not a naive square
+  diff), which means:
+  - captures, castling and promotions are detected correctly;
+  - impossible readouts (two kings, teleporting pieces — i.e. camera noise)
+    match no legal move and are **ignored** rather than corrupting the game
+    state;
+  - the tracker knows whose turn it is and castling rights, which a photo
+    alone cannot tell you.
+
+  `update()` returns a status: `"move"` (with SAN), `"no_change"`,
+  `"new_game"` (board returned to the start position), or `"unrecognized"`
+  (noise).
+
+Same commit, refactor:
+
+- New `board_utils.py` holds the drawing/warping/square-splitting helpers
+  that were previously duplicated (and diverging) between `main.py` and
+  `live_main.py`.
+- `main.py` slimmed from 261 to ~80 lines; dead code removed; now warps at
+  1000px to match the training data (was 500px).
+
+> **Important usage detail:** corner click order now matters. The *first*
+> corner you click must be the top-left **from white's perspective** (the
+> corner nearest white's queenside rook), then go clockwise. A rotated click
+> order used to just rotate the display; now it would produce wrong FENs.
+
+```bash
+python3 main.py   # static image mode (imgs/test2.JPG by default)
+```
+
+Click 4 corners, press `p` → prints FEN, shows digital board. `d` → debug
+render of the starting position without the model. `q` → quit. Verify a FEN
+visually by pasting it into [lichess.org/editor](https://lichess.org/editor).
+
+## 3. Tests (`4c5f6b3`)
+
+New file `test_board_state.py`. Simulates board readouts from python-chess
+positions, so no camera or model is needed. Covers: start position FEN, an
+8-move game (capture + castling), duplicate readouts, noise rejection,
+new-game detection, and (added later) PGN export round-trip.
+
+```bash
+python3 test_board_state.py
+```
+
+## 4. Real piece graphics + color fix (`9f9cacb`)
+
+- `assets/` now contains the standard
+  [cburnett](https://github.com/lichess-org/lila/tree/master/public/piece/cburnett)
+  piece set (the one lichess and Wikipedia use) as 250px transparent PNGs
+  from Wikimedia Commons. The digital board shows real piece images instead
+  of text labels.
+- Bug fix found during this work: the board's "beige/brown" colors were
+  written in RGB order but OpenCV expects BGR, so the board had always
+  rendered **blue**. Now actually beige/brown.
+
+Nothing to do — both scripts pick the images up automatically from `assets/`.
+
+## 5. Batched inference + temporal voting (`2e04f9d`)
+
+`models/square_classifier.py`:
+
+- `predict_board(model, squares)`: classifies all 64 squares in **one**
+  forward pass instead of 64 separate ones, on the best available device
+  (Apple GPU / `mps`). Measured: **304ms → 19ms per board (15.8× faster)**,
+  identical predictions.
+- `get_device()` helper; `predict_square()` now follows the model's device.
+
+`live_main.py`:
+
+- Predicts every 0.4s (was 2.0s).
+- Each square's displayed label is the **majority vote** over its last 5
+  readouts (~2s of evidence). A single bad frame — hand over the board,
+  motion blur, lighting flicker — loses the vote instead of corrupting the
+  board. Transient errors are effectively eliminated; *persistent* errors
+  (e.g. a reflection fooling the model the same way every frame) are **not**
+  fixed by voting — those indicate the model needs more data.
+- "Unrecognized readout" warnings print once per distinct bad readout instead
+  of every cycle. Vote history clears when corners are reset.
+
+Verified offline with a simulated noisy game: one garbage frame per move plus
+1–2 random square errors per clean frame; all 7 moves (including castling)
+detected correctly.
+
+## 6. PGN export (`7c3cc1e`)
+
+`board_state.py`:
+
+- `GameTracker.to_pgn()`: the tracked game as a PGN string with headers
+  (Event/Site/Date/players/Result — including `1-0`/`0-1` on checkmate).
+- `GameTracker.save_pgn()`: writes `games/game_YYYYMMDD_HHMMSS.pgn`.
+
+`live_main.py` saves the PGN automatically when you quit (`q`) if any moves
+were detected, and prints the file path.
+
+**How to use the result:** open [lichess.org/paste](https://lichess.org/paste),
+paste the `.pgn` file contents, and you get full engine analysis (eval graph,
+blunder arrows) of the game you played on the physical board. `games/` is
+gitignored.
+
+## 7. Auto-calibration (`6522766`)
+
+The idea: the starting position is fully known and contains **all 13 classes**
+(every piece type both colors + empty). So one capture of a board set up for
+a new game = 64 perfectly labeled training images of *your* chess set under
+*your* current lighting, zero manual labeling.
+
+New file `calibration.py`:
+
+- `save_starting_position_squares(squares)`: writes the 64 crops into
+  `calibration_data/<class>/` — the same folder layout as `dataset_v2`, so
+  the data can be merged into training. Per capture: 32 empty, 8 of each
+  pawn, 2 of each minor/rook, 1 of each king/queen.
+
+`live_main.py` triggers:
+
+- **Automatic:** once per game, when the (voted) readout matches the starting
+  position.
+- **Manual:** press `c` when the physical board shows the starting position.
+  This works even if the model misreads the board — which is exactly the
+  point: it is how you collect data for a *new* chess set the model has never
+  seen.
+
+To use the collected data for retraining: merge the class folders from
+`calibration_data/` into `dataset_v2/` (e.g.
+`cp calibration_data/bk/* dataset_v2/bk/` for each class) and run
+`python3 train.py`. `calibration_data/` is gitignored.
+
+## Live mode — full key reference (`live_main.py`)
+
+```bash
+python3 live_main.py
+```
+
+- Click 4 board corners: top-left from white's perspective **first**, then
+  clockwise (white at the bottom of the warped view).
+- Board updates every 0.4s; moves print as SAN + FEN as they happen.
+
+| Key | Action |
+|---|---|
+| `c` | Capture calibration data (board must show the starting position) |
+| `r` | Reset corners (also clears vote history) |
+| `q` | Quit (saves the game to `games/*.pgn` if moves were detected) |
+
+> Tip: `WEBCAM_ID` in `live_main.py` accepts a video file path instead of a
+> camera index — record a game once and replay it for testing forever.
+
+## Known limitations / agreed next steps
+
+- Tracker follows **one** move per readout; if it falls behind it stays
+  "unrecognized" until reset. Planned fixes: two-move resync, takeback
+  detection (board matching an earlier position).
+- Corner clicks assume white at the bottom; auto-orientation (trying all 4
+  rotations at game start) would remove the click-order requirement.
+- Corners are static; a bumped camera breaks the warp (optical-flow corner
+  tracking is the planned fix). Auto board detection is further out.
+- Model-side: kings/queens have the least data (~40 images each); more
+  photos, or accumulated auto-calibration captures, is the highest-value
+  model improvement. Live validation of voting still pending (needs the
+  physical board back).
+- Ideas discussed for later: Stockfish integration (eval bar, blunder alerts,
+  play-vs-engine on a real board), opening recognition, lichess broadcast,
+  web dashboard, AR move-suggestion overlay on the camera feed, spoken moves
+  (macOS `say`), annotated side-by-side game videos.
