@@ -3,3 +3,4 @@ raw_photos/
 __pycache__/
 *.DS_Storeyolov5/
 games/
+calibration_data/

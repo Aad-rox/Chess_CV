@@ -13,6 +13,18 @@ import os
 import chess
 import chess.pgn
 
+# Square labels for the standard starting position, row-major from rank 8.
+# Note this contains every one of the 13 classes - which is what makes
+# auto-calibration possible (see calibration.py).
+STARTING_PREDICTIONS = (
+    ["br", "bn", "bb", "bq", "bk", "bb", "bn", "br"]
+    + ["bp"] * 8
+    + ["empty"] * 32
+    + ["wp"] * 8
+    + ["wr", "wn", "wb", "wq", "wk", "wb", "wn", "wr"]
+)
+
+
 # Our labels are color + piece letter ("wk", "bn"). FEN uses uppercase for
 # white, lowercase for black, with the same piece letters.
 def _label_to_fen_char(label):

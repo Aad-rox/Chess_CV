@@ -3,18 +3,12 @@ import numpy as np
 
 from models.square_classifier import load_model, predict_square
 from board_utils import generate_digital_board, perspective_transform, split_into_squares
-from board_state import predictions_to_placement
+from board_state import predictions_to_placement, STARTING_PREDICTIONS
 
 IMAGE_PATH = "imgs/test2.JPG"
 
-# Hardcoded labels for a standard starting position (debug mode)
-DEBUG_PREDS = (
-    ["br", "bn", "bb", "bq", "bk", "bb", "bn", "br"]
-    + ["bp"] * 8
-    + ["empty"] * 32
-    + ["wp"] * 8
-    + ["wr", "wn", "wb", "wq", "wk", "wb", "wn", "wr"]
-)
+# Labels for the standard starting position (debug mode)
+DEBUG_PREDS = STARTING_PREDICTIONS
 
 points = []
 

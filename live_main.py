@@ -6,6 +6,7 @@ from collections import Counter, deque
 from models.square_classifier import load_model, predict_board, get_device
 from board_utils import generate_digital_board, perspective_transform, split_into_squares
 from board_state import GameTracker
+from calibration import save_starting_position_squares
 
 # --- CONFIGURATION ---
 PREDICTION_INTERVAL = 0.4  # Seconds between board readouts
@@ -54,14 +55,18 @@ def main():
     # board, motion blur) loses the vote instead of corrupting the board.
     histories = [deque(maxlen=VOTE_WINDOW) for _ in range(64)]
     last_warned_placement = None
+    last_squares = None  # Most recent square crops, for calibration capture
+    auto_calibrated = False  # Capture the starting position once per game
 
     print("--- LIVE MODE ---")
     print("1. Click 4 corners of the board (white at the bottom, top-left first).")
     print(f"2. Squares are voted over the last {VOTE_WINDOW} readouts "
           f"({PREDICTION_INTERVAL}s apart).")
     print("3. Detected moves and FEN are printed as the game progresses.")
-    print("4. Press 'r' to reset corners.")
-    print("5. Press 'q' to quit.")
+    print("4. Press 'c' with the board in the STARTING POSITION to capture")
+    print("   labeled training images of your set (auto-captured once per game).")
+    print("5. Press 'r' to reset corners.")
+    print("6. Press 'q' to quit.")
 
     while True:
         ret, frame = cap.read()
@@ -87,7 +92,8 @@ def main():
                     warped = perspective_transform(frame, src_pts)
 
                     # One batched forward pass for the whole board
-                    preds = predict_board(model, split_into_squares(warped))
+                    last_squares = split_into_squares(warped)
+                    preds = predict_board(model, last_squares)
                     last_prediction_time = current_time
 
                     for history, label in zip(histories, preds):
@@ -106,6 +112,17 @@ def main():
                     elif result["status"] == "new_game":
                         print("New game detected - tracker reset.")
                         last_warned_placement = None
+                        auto_calibrated = False
+
+                    # AUTO-CALIBRATION: the starting position is fully known,
+                    # so capture it once per game as free labeled training data
+                    if (not auto_calibrated
+                            and tracker.board.board_fen() == GameTracker.START_PLACEMENT
+                            and result["status"] in ("new_game", "no_change")):
+                        n = save_starting_position_squares(last_squares)
+                        auto_calibrated = True
+                        print(f"Auto-calibration: saved {n} labeled square "
+                              f"images to calibration_data/.")
                     elif result["status"] == "unrecognized":
                         # Warn once per distinct bad readout, not every cycle
                         if result["placement"] != last_warned_placement:
@@ -122,6 +139,17 @@ def main():
 
         # 5. Input Handling
         key = cv2.waitKey(1) & 0xFF
+        if key == ord('c'):
+            # Manual calibration: the user asserts the board shows the
+            # starting position, regardless of what the model predicts.
+            # Use this for new chess sets the model doesn't know yet.
+            if last_squares is not None:
+                n = save_starting_position_squares(last_squares)
+                print(f"Calibration: saved {n} labeled square images to "
+                      f"calibration_data/ (make sure the board showed the "
+                      f"starting position!)")
+            else:
+                print("Calibration: no board readout yet - click 4 corners first.")
         if key == ord('r'):
             points.clear()
             for history in histories:
