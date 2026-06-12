@@ -7,7 +7,11 @@ Conventions:
   the predictions is rank 8 (black's back rank).
 """
 
+import datetime
+import os
+
 import chess
+import chess.pgn
 
 # Our labels are color + piece letter ("wk", "bn"). FEN uses uppercase for
 # white, lowercase for black, with the same piece letters.
@@ -95,3 +99,22 @@ class GameTracker:
             self.board.pop()
 
         return {"status": "unrecognized", "placement": placement}
+
+    def to_pgn(self, event="Chess CV live capture", white="White", black="Black"):
+        """Returns the tracked game as a PGN string."""
+        game = chess.pgn.Game.from_board(self.board)
+        game.headers["Event"] = event
+        game.headers["Site"] = "Chess CV"
+        game.headers["Date"] = datetime.date.today().strftime("%Y.%m.%d")
+        game.headers["White"] = white
+        game.headers["Black"] = black
+        return str(game)
+
+    def save_pgn(self, directory="games"):
+        """Writes the game to a timestamped .pgn file. Returns the path."""
+        os.makedirs(directory, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(directory, f"game_{stamp}.pgn")
+        with open(path, "w") as f:
+            f.write(self.to_pgn() + "\n")
+        return path

@@ -133,10 +133,12 @@ def main():
     cap.release()
     cv2.destroyAllWindows()
 
-    # Print the final game record
+    # Print and save the final game record
     if tracker.moves:
         print("\nGame moves:", " ".join(tracker.moves))
         print(f"Final FEN: {tracker.fen}")
+        path = tracker.save_pgn()
+        print(f"Game saved to {path} - import it on lichess.org/paste for analysis.")
 
 
 if __name__ == "__main__":

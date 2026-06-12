@@ -4,7 +4,10 @@ No camera or model needed: board readouts are simulated from python-chess
 positions, so this verifies the FEN conversion and move tracking logic only.
 """
 
+import io
+
 import chess
+import chess.pgn
 
 from board_state import predictions_to_placement, GameTracker
 
@@ -57,6 +60,25 @@ def main():
     result = tracker.update(board_to_preds(chess.Board()))
     assert result["status"] == "new_game" and tracker.moves == []
     print("5. Reset to start position -> new_game OK")
+
+    # 6. PGN export round-trips through python-chess, with the right result
+    tracker = GameTracker()
+    game = chess.Board()
+    for uci in ["e2e4", "e7e5", "f1c4", "b8c6", "d1h5", "g8f6", "h5f7"]:  # Scholar's mate
+        game.push_uci(uci)
+        assert tracker.update(board_to_preds(game))["status"] == "move"
+
+    pgn_text = tracker.to_pgn()
+    reparsed = chess.pgn.read_game(io.StringIO(pgn_text))
+    replayed_sans = []
+    board = reparsed.board()
+    for move in reparsed.mainline_moves():
+        replayed_sans.append(board.san(move))
+        board.push(move)
+    assert replayed_sans == tracker.moves, (replayed_sans, tracker.moves)
+    assert reparsed.headers["Result"] == "1-0", reparsed.headers["Result"]
+    print("6. PGN export round-trip + checkmate result OK")
+    print(f"   {pgn_text.splitlines()[-1]}")
 
     print("\nALL TESTS PASSED")
 
