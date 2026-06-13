@@ -5,7 +5,7 @@ from models.square_classifier import load_model, predict_square
 from board_utils import generate_digital_board, perspective_transform, split_into_squares
 from board_state import predictions_to_placement, STARTING_PREDICTIONS
 
-IMAGE_PATH = "imgs/test2.JPG"
+IMAGE_PATH = "/Users/aadityamoudgil/Desktop/Chess_CV/raw_photos/IMG_1957.JPG"
 
 # Labels for the standard starting position (debug mode)
 DEBUG_PREDS = STARTING_PREDICTIONS
