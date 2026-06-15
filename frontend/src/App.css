@@ -1,0 +1,7 @@
+.app {
+  font-family: system-ui, -apple-system, sans-serif;
+  max-width: 540px;
+  margin: 40px auto;
+  text-align: center;
+  color: #222;
+}
